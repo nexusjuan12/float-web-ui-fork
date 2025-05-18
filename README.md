@@ -78,14 +78,6 @@ pip install -r requirements.txt
     ```
    - W2V based models could be found in the links: [wav2vec2-base-960h](https://huggingface.co/facebook/wav2vec2-base-960h) and [wav2vec-english-speech-emotion-recognition](https://huggingface.co/r-f/wav2vec-english-speech-emotion-recognition).
 
-
-Here's a clear, concise section for generating talking portrait videos from image and audio inputs, presented in both English and Thai:
-
-English Version:
-
-markdown
-## 🎬 Generating Talking Portrait Videos
-
 ### Basic Usage
 1. **Prepare Inputs**:
    - Image: Front-facing portrait (512×512 recommended)
@@ -114,7 +106,7 @@ Parameter	Description	Recommended
 --seed	Random seed	15-100
 ```
 
-Pro Tips:
-    - Use --emo neutral for subtle lip-sync only
-    - For musical audio, extract vocals first
-    - Higher --e_cfg_scale values (8-10) create dramatic expressions
+Pro Tips :
+   Use --emo neutral for subtle lip-sync only
+   For musical audio, extract vocals first
+   Higher --e_cfg_scale values (8-10) create dramatic expressions
