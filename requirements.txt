@@ -90,13 +90,12 @@ tifffile==2023.7.10
 timm==1.0.9
 tokenizers==0.13.3
 tomlkit==0.12.0
-torch==2.0.1+cu118
-torchaudio==2.0.2+cu118
+torch==2.1.0
+torchaudio==2.1.0
 torchdiffeq==0.2.5
-torchvision==0.15.2+cu118
+torchvision==0.16.0
 tqdm==4.67.1
 transformers==4.30.2
-triton==2.0.0
 typer==0.15.4
 typing_extensions==4.12.2
 tzdata==2025.2
