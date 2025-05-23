@@ -56,10 +56,10 @@ check_system() {
         exit 1
     fi
     
-    # Check available disk space (need at least 10GB)
+    # Check available disk space (need at least 15GB for models)
     AVAILABLE_SPACE=$(df -BG "$HOME" | awk 'NR==2 {print $4}' | sed 's/G//')
-    if [ "$AVAILABLE_SPACE" -lt 10 ]; then
-        error "Insufficient disk space. Need at least 10GB, have ${AVAILABLE_SPACE}GB"
+    if [ "$AVAILABLE_SPACE" -lt 15 ]; then
+        error "Insufficient disk space. Need at least 15GB, have ${AVAILABLE_SPACE}GB"
         exit 1
     fi
     
@@ -67,18 +67,28 @@ check_system() {
     log "Installing system dependencies..."
     if command -v apt-get &> /dev/null; then
         sudo apt-get update -qq
-        sudo apt-get install -y ffmpeg git wget curl
+        sudo apt-get install -y ffmpeg git git-lfs wget curl
     elif command -v yum &> /dev/null; then
-        sudo yum install -y ffmpeg git wget curl
+        sudo yum install -y ffmpeg git git-lfs wget curl
     else
-        warn "Package manager not found. Please install ffmpeg, git, wget, and curl manually."
+        warn "Package manager not found. Please install ffmpeg, git, git-lfs, wget, and curl manually."
     fi
     
-    # Verify ffmpeg installation
+    # Initialize git-lfs
+    log "Initializing git-lfs for large file support..."
+    git lfs install
+    
+    # Verify installations
     if command -v ffmpeg &> /dev/null && command -v ffprobe &> /dev/null; then
         log "ffmpeg and ffprobe installed successfully ✓"
     else
         warn "ffmpeg/ffprobe installation may have failed. Audio processing might not work."
+    fi
+    
+    if command -v git-lfs &> /dev/null; then
+        log "git-lfs installed successfully ✓"
+    else
+        warn "git-lfs installation may have failed. Large model downloads might not work."
     fi
     
     log "System check passed ✓"
@@ -217,20 +227,143 @@ download_checkpoints() {
     
     # Create checkpoints directory
     mkdir -p checkpoints
+    cd checkpoints
     
-    # Check if download script exists and run it
-    if [ -f "download_checkpoints.sh" ]; then
-        log "Running checkpoint download script..."
-        chmod +x download_checkpoints.sh
-        ./download_checkpoints.sh
+    # Check if main model exists
+    if [ ! -f "float.pth" ]; then
+        # Check if download script exists and run it
+        if [ -f "../download_checkpoints.sh" ]; then
+            log "Running checkpoint download script..."
+            cd ..
+            chmod +x download_checkpoints.sh
+            ./download_checkpoints.sh
+            cd checkpoints
+        else
+            warn "download_checkpoints.sh not found."
+            echo "Manual download required:"
+            echo "1. Download from: https://drive.google.com/file/d/1rvWuM12cyvNvBQNCLmG4Fr2L1rpjQBF0/view?usp=sharing"
+            echo "2. Extract float.pth to: $PROJECT_DIR/checkpoints/"
+        fi
     else
-        warn "download_checkpoints.sh not found. Please download checkpoints manually."
-        echo "Manual download instructions:"
-        echo "1. Download from: https://drive.google.com/file/d/1rvWuM12cyvNvBQNCLmG4Fr2L1rpjQBF0/view?usp=sharing"
-        echo "2. Extract to: $PROJECT_DIR/checkpoints/"
+        log "Main model float.pth already exists ✓"
+    fi
+    
+    # Download wav2vec2 model with git-lfs
+    if [ ! -d "wav2vec2-base-960h" ] || [ ! -f "wav2vec2-base-960h/pytorch_model.bin" ] || [ $(stat -c%s "wav2vec2-base-960h/pytorch_model.bin" 2>/dev/null || echo 0) -lt 1000000 ]; then
+        log "Downloading wav2vec2-base-960h model (this may take several minutes)..."
+        rm -rf wav2vec2-base-960h
+        
+        # Try git-lfs method first
+        if git clone https://huggingface.co/facebook/wav2vec2-base-960h; then
+            # Verify the download worked
+            if [ -f "wav2vec2-base-960h/pytorch_model.bin" ] && [ $(stat -c%s "wav2vec2-base-960h/pytorch_model.bin") -gt 1000000 ]; then
+                log "wav2vec2-base-960h downloaded successfully ✓"
+            else
+                warn "git-lfs download failed, trying direct download..."
+                rm -rf wav2vec2-base-960h
+                download_wav2vec2_direct
+            fi
+        else
+            warn "git clone failed, trying direct download..."
+            download_wav2vec2_direct
+        fi
+    else
+        log "wav2vec2-base-960h model already exists ✓"
+    fi
+    
+    # Download emotion recognition model
+    if [ ! -d "wav2vec-english-speech-emotion-recognition" ] || [ ! -f "wav2vec-english-speech-emotion-recognition/pytorch_model.bin" ] || [ $(stat -c%s "wav2vec-english-speech-emotion-recognition/pytorch_model.bin" 2>/dev/null || echo 0) -lt 1000000 ]; then
+        log "Downloading emotion recognition model..."
+        rm -rf wav2vec-english-speech-emotion-recognition
+        
+        # Try git-lfs method first
+        if git clone https://huggingface.co/r-f/wav2vec-english-speech-emotion-recognition; then
+            # Verify the download worked
+            if [ -f "wav2vec-english-speech-emotion-recognition/pytorch_model.bin" ] && [ $(stat -c%s "wav2vec-english-speech-emotion-recognition/pytorch_model.bin") -gt 1000000 ]; then
+                log "emotion recognition model downloaded successfully ✓"
+            else
+                warn "git-lfs download failed, trying direct download..."
+                rm -rf wav2vec-english-speech-emotion-recognition
+                download_emotion_model_direct
+            fi
+        else
+            warn "git clone failed, trying direct download..."
+            download_emotion_model_direct
+        fi
+    else
+        log "emotion recognition model already exists ✓"
+    fi
+    
+    # Verify final checkpoint structure
+    log "Verifying checkpoint structure..."
+    
+    local missing_files=()
+    
+    if [ ! -f "float.pth" ]; then
+        missing_files+=("float.pth")
+    fi
+    
+    if [ ! -f "wav2vec2-base-960h/pytorch_model.bin" ]; then
+        missing_files+=("wav2vec2-base-960h/pytorch_model.bin")
+    fi
+    
+    if [ ! -f "wav2vec-english-speech-emotion-recognition/pytorch_model.bin" ]; then
+        missing_files+=("wav2vec-english-speech-emotion-recognition/pytorch_model.bin")
+    fi
+    
+    if [ ${#missing_files[@]} -eq 0 ]; then
+        log "All checkpoint files verified ✓"
+        
+        # Show file sizes for verification
+        echo "Checkpoint file sizes:"
+        ls -lh float.pth 2>/dev/null || echo "  float.pth: MISSING"
+        ls -lh wav2vec2-base-960h/pytorch_model.bin 2>/dev/null || echo "  wav2vec2 model: MISSING"
+        ls -lh wav2vec-english-speech-emotion-recognition/pytorch_model.bin 2>/dev/null || echo "  emotion model: MISSING"
+    else
+        warn "Missing checkpoint files: ${missing_files[*]}"
+        echo "The application may not work properly without these files."
     fi
     
     log "Checkpoint setup completed ✓"
+}
+
+# Helper function for direct wav2vec2 download
+download_wav2vec2_direct() {
+    log "Using direct download for wav2vec2-base-960h..."
+    mkdir -p wav2vec2-base-960h
+    
+    wget -q --show-progress -O wav2vec2-base-960h/pytorch_model.bin "https://huggingface.co/facebook/wav2vec2-base-960h/resolve/main/pytorch_model.bin" || {
+        error "Failed to download wav2vec2 model"
+        return 1
+    }
+    
+    # Download config files
+    wget -q -O wav2vec2-base-960h/config.json "https://huggingface.co/facebook/wav2vec2-base-960h/resolve/main/config.json"
+    wget -q -O wav2vec2-base-960h/feature_extractor_config.json "https://huggingface.co/facebook/wav2vec2-base-960h/resolve/main/feature_extractor_config.json"
+    wget -q -O wav2vec2-base-960h/preprocessor_config.json "https://huggingface.co/facebook/wav2vec2-base-960h/resolve/main/preprocessor_config.json"
+    wget -q -O wav2vec2-base-960h/special_tokens_map.json "https://huggingface.co/facebook/wav2vec2-base-960h/resolve/main/special_tokens_map.json"
+    wget -q -O wav2vec2-base-960h/tokenizer_config.json "https://huggingface.co/facebook/wav2vec2-base-960h/resolve/main/tokenizer_config.json"
+    wget -q -O wav2vec2-base-960h/vocab.json "https://huggingface.co/facebook/wav2vec2-base-960h/resolve/main/vocab.json"
+    
+    log "wav2vec2-base-960h direct download completed ✓"
+}
+
+# Helper function for direct emotion model download
+download_emotion_model_direct() {
+    log "Using direct download for emotion recognition model..."
+    mkdir -p wav2vec-english-speech-emotion-recognition
+    
+    wget -q --show-progress -O wav2vec-english-speech-emotion-recognition/pytorch_model.bin "https://huggingface.co/r-f/wav2vec-english-speech-emotion-recognition/resolve/main/pytorch_model.bin" || {
+        error "Failed to download emotion model"
+        return 1
+    }
+    
+    # Download config files
+    wget -q -O wav2vec-english-speech-emotion-recognition/config.json "https://huggingface.co/r-f/wav2vec-english-speech-emotion-recognition/resolve/main/config.json"
+    wget -q -O wav2vec-english-speech-emotion-recognition/preprocessor_config.json "https://huggingface.co/r-f/wav2vec-english-speech-emotion-recognition/resolve/main/preprocessor_config.json"
+    wget -q -O wav2vec-english-speech-emotion-recognition/training_args.bin "https://huggingface.co/r-f/wav2vec-english-speech-emotion-recognition/resolve/main/training_args.bin"
+    
+    log "emotion recognition model direct download completed ✓"
 }
 
 # Create startup script
